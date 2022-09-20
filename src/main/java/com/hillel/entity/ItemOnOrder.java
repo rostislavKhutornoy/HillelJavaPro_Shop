@@ -1,0 +1,49 @@
+package com.hillel.entity;
+
+public class ItemOnOrder {
+    private int id;
+    private Product product;
+    private int amount;
+
+    public ItemOnOrder() {
+    }
+
+    public ItemOnOrder(int id, Product product, int amount) {
+        this.id = id;
+        this.product = product;
+        this.amount = amount;
+    }
+
+    @Override
+    public String toString() {
+        return "ItemOnOrder{" +
+                "id=" + id +
+                ", product=" + product +
+                ", amount=" + amount +
+                '}';
+    }
+
+    public int getId() {
+        return id;
+    }
+
+    public void setId(int id) {
+        this.id = id;
+    }
+
+    public Product getProduct() {
+        return product;
+    }
+
+    public void setProduct(Product product) {
+        this.product = product;
+    }
+
+    public int getAmount() {
+        return amount;
+    }
+
+    public void setAmount(int amount) {
+        this.amount = amount;
+    }
+}
