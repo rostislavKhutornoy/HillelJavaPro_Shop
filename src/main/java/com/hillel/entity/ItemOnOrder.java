@@ -1,15 +1,15 @@
 package com.hillel.entity;
 
 public class ItemOnOrder {
-    private int id;
+    private int orderNumber;
     private Product product;
     private int amount;
 
     public ItemOnOrder() {
     }
 
-    public ItemOnOrder(int id, Product product, int amount) {
-        this.id = id;
+    public ItemOnOrder(int orderNumber, Product product, int amount) {
+        this.orderNumber = orderNumber;
         this.product = product;
         this.amount = amount;
     }
@@ -17,18 +17,18 @@ public class ItemOnOrder {
     @Override
     public String toString() {
         return "ItemOnOrder{" +
-                "id=" + id +
+                "id=" + orderNumber +
                 ", product=" + product +
                 ", amount=" + amount +
                 '}';
     }
 
-    public int getId() {
-        return id;
+    public int getOrderNumber() {
+        return orderNumber;
     }
 
-    public void setId(int id) {
-        this.id = id;
+    public void setOrderNumber(int id) {
+        this.orderNumber = id;
     }
 
     public Product getProduct() {

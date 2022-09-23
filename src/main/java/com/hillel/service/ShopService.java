@@ -1,24 +1,20 @@
 package com.hillel.service;
 
-import com.hillel.entity.ItemOnOrder;
+import com.hillel.connection.ConnectionProvider;
 import com.hillel.entity.Order;
-import com.hillel.entity.Product;
-import com.hillel.repository.ItemOnOrderRepository;
 import com.hillel.repository.OrderRepository;
-
-import java.sql.Date;
-import java.time.LocalDate;
+import java.sql.*;
 import java.util.ArrayList;
-
 import java.util.List;
 
+import static com.hillel.repository.BaseRepository.closeConnection;
+import static java.util.Objects.nonNull;
+
 public class ShopService {
-    private OrderRepository orderRepository;
-    private ItemOnOrderRepository itemOnOrderRepository;
+    private final OrderRepository orderRepository;
 
     public ShopService() {
         this.orderRepository = new OrderRepository();
-        this.itemOnOrderRepository = new ItemOnOrderRepository();
     }
 
     public Order orderInfo(int orderNumber) {
@@ -26,48 +22,120 @@ public class ShopService {
     }
 
     public List<Integer> orderNumbers(double maxTotalCost, int quantityDifferentProducts) {
-        List<Integer> result = new ArrayList<>();
-        List<Order> allOrders = orderRepository.findAll();
-        List<Integer> orderNumbers = allOrders.stream().map(Order::getOrderNumber).toList();
-        for (Integer orderNumber : orderNumbers) {
-            if(orderRepository.findByNumber(orderNumber).getItemsOnOrder().size() == quantityDifferentProducts) {
-                if (orderRepository.orderCost(orderNumber) <= maxTotalCost) {
-                    result.add(orderNumber);
+        Connection connection = ConnectionProvider.provideConnection();
+        if(nonNull(connection)) {
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    SELECT item_on_order.order_number, SUM(cost * amount) AS sum_cost,\s
+                    COUNT(DISTINCT item_on_order.product_id) AS product_count
+                    FROM shop.order
+                    JOIN item_on_order ON shop.order.order_number = item_on_order.order_number
+                    JOIN product ON product_id = product.id
+                    GROUP BY order_number
+                    HAVING sum_cost <= ? AND product_count = ?
+                    """)){
+                statement.setDouble(1, maxTotalCost);
+                statement.setInt(2, quantityDifferentProducts);
+                ResultSet resultSet = statement.executeQuery();
+                List<Integer> result = new ArrayList<>();
+                while (resultSet.next()) {
+                    result.add(resultSet.getInt("order_number"));
                 }
+                return result;
+            } catch (SQLException exception) {
+                exception.printStackTrace();
+            } finally {
+                closeConnection(connection);
             }
         }
-        return result;
+        return List.of();
     }
 
     public List<Integer> hasProduct(String productName) {
-        List<Integer> result = new ArrayList<>();
-        List<Order> allOrders = orderRepository.findAll();
-        List<Integer> orderNumbers = allOrders.stream().map(Order::getOrderNumber).toList();
-        for (Integer orderNumber : orderNumbers) {
-            List<String> allProductNames = orderRepository.findByNumber(orderNumber)
-                    .getItemsOnOrder()
-                    .stream()
-                    .map(ItemOnOrder::getProduct)
-                    .map(Product::getName)
-                    .toList()
-                    .stream()
-                    .filter(name -> name.equals(productName)).toList();;
-           if (allProductNames.size() > 0) {
-               result.add(orderNumber);
-           }
-        }
-        return result;
+        return findProductNumberByNamePattern(productName, """
+                SELECT DISTINCT order_number FROM item_on_order
+                JOIN product ON item_on_order.product_id = product.id
+                WHERE product.name = ?
+                """);
     }
 
-    public List<Integer> hasntProductToday(String productName, LocalDate todayDate) {
-        List<Order> allOrders = orderRepository.findAll();
-        List<Integer> orderNumbers = new ArrayList<>(allOrders.stream().map(Order::getOrderNumber).toList());
-        List<Integer> hasProduct = hasProduct(productName);
-        for (Integer orderNumber : hasProduct) {
-            orderNumbers.remove(orderNumber);
+    public List<Integer> hasntProductToday(String productName) {
+        return findProductNumberByNamePattern(productName, """
+                SELECT item_on_order.order_number FROM item_on_order
+                JOIN shop.order ON item_on_order.order_number = shop.order.order_number
+                WHERE item_on_order.order_number NOT IN (SELECT order_number FROM item_on_order
+                JOIN product ON item_on_order.product_id = product.id
+                WHERE name = ?)
+                AND receipt_date BETWEEN Addtime(Curdate(), '00:00:00') AND Addtime(Curdate(), '23:59:59')
+                """);
+    }
+
+    public void newOrderFromOrderedToday() {
+        sqlUpdate("""
+                INSERT INTO item_on_order(item_on_order.order_number, item_on_order.product_id, item_on_order.amount)
+                SELECT MAX(shop.order.order_number) + 1  AS order_number, item_on_order.product_id, SUM(item_on_order.amount) / 2 AS amount
+                FROM item_on_order, shop.order
+                WHERE item_on_order.product_id IN (SELECT DISTINCT item_on_order.product_id FROM shop.order
+                WHERE shop.order.receipt_date BETWEEN Addtime(Curdate(), '00:00:00') AND Addtime(Curdate(), '23:59:59'))
+                GROUP BY item_on_order.product_id
+                """);
+        sqlUpdate("""
+                INSERT INTO shop.order (shop.order.order_number, shop.order.receipt_date)
+                SELECT MAX(shop.order.order_number) + 1, CURDATE()
+                FROM shop.order
+                """);
+    }
+
+    public void deleteOrderWith(String productName, int amount) {
+        Connection connection = ConnectionProvider.provideConnection();
+        if(nonNull(connection)) {
+            try (PreparedStatement statement = connection.prepareStatement("""
+                DELETE shop.order, item_on_order FROM shop.order
+                JOIN item_on_order ON shop.order.order_number = item_on_order.order_number
+                JOIN product ON item_on_order.product_id = product.id
+                WHERE product.name = ?
+                AND item_on_order.amount = ?
+                """)){
+                statement.setString(1, productName);
+                statement.setInt(2, amount);
+                statement.executeUpdate();
+            } catch (SQLException exception) {
+                exception.printStackTrace();
+            } finally {
+                closeConnection(connection);
+            }
         }
-        orderNumbers.removeIf(orderNumber -> !orderRepository.findByNumber(orderNumber)
-                .getReceiptDate().isEqual(todayDate));
-        return orderNumbers;
+    }
+
+    private List<Integer> findProductNumberByNamePattern(String productName, String sql) {
+        Connection connection = ConnectionProvider.provideConnection();
+        if(nonNull(connection)) {
+            try (PreparedStatement statement = connection.prepareStatement(sql)){
+                statement.setString(1, productName);
+                ResultSet resultSet = statement.executeQuery();
+                List<Integer> result = new ArrayList<>();
+                while (resultSet.next()) {
+                    result.add(resultSet.getInt("order_number"));
+                }
+                return result;
+            } catch (SQLException exception) {
+                exception.printStackTrace();
+            } finally {
+                closeConnection(connection);
+            }
+        }
+        return List.of();
+    }
+
+    private void sqlUpdate(String sql) {
+        Connection connection = ConnectionProvider.provideConnection();
+        if(nonNull(connection)) {
+            try (PreparedStatement statement = connection.prepareStatement(sql)){
+                statement.executeUpdate();
+            } catch (SQLException exception) {
+                exception.printStackTrace();
+            } finally {
+                closeConnection(connection);
+            }
+        }
     }
 }
